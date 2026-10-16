@@ -238,7 +238,21 @@ def has_harm(text):
     return next((k for k in HARM_KEYWORDS if k in low), None)
 
 
-def verify(clusters, seen_fps):
+def _is_near_dup(title, recent_titles, thresh=0.5):
+    """Same story, reworded headline -> treat as duplicate."""
+    sw = sig_words(title)
+    if not sw:
+        return False
+    for t in recent_titles:
+        pw = sig_words(t)
+        if not pw:
+            continue
+        if len(sw & pw) / max(len(sw), len(pw)) >= thresh:
+            return True
+    return False
+
+
+def verify(clusters, seen_fps, recent_titles=()):
     """Truth check. Returns (passed, stats). passed = list of story dicts."""
     passed, stats = [], {"checked": len(clusters), "passed": 0,
                          "rejected": 0, "rejected_reasons": {}}
@@ -254,14 +268,15 @@ def verify(clusters, seen_fps):
         if harm:
             reject("harm"); continue
         doms = {c["domain"] for c in cl if c["domain"]}
-        rep = {d for d in doms if d in REPUTABLE_DOMAINS}
-        # truth signal: >=MIN_SOURCES independent outlets AND >=1 reputable
-        if len(doms) < MIN_SOURCES or not rep:
+        rep_doms = {d for d in doms if d in REPUTABLE_DOMAINS}
+        # truth signal: 3+ independent outlets incl. 1 reputable,
+        # OR 2 reputable outlets independently reporting the same story
+        if not ((len(doms) >= MIN_SOURCES and rep_doms) or len(rep_doms) >= 2):
             reject("single_source"); continue
+        item = min(cl, key=lambda c: c["published"])  # earliest report
         fp = fingerprint(cl)
-        if fp in seen_fps:
+        if fp in seen_fps or _is_near_dup(item["title"], recent_titles):
             reject("duplicate"); continue
-        rep = min(cl, key=lambda c: c["published"])  # earliest report
         seen_d, src_links = set(), []
         for c in cl:
             if c["domain"] and c["domain"] not in seen_d:
@@ -270,12 +285,12 @@ def verify(clusters, seen_fps):
         top_cat = Counter(c["category"] for c in cl).most_common(1)[0][0]
         passed.append({
             "fingerprint": fp,
-            "title": rep["title"],
-            "link": rep["link"],
+            "title": item["title"],
+            "link": item["link"],
             "category": top_cat,
             "sources": sorted(doms),
             "source_links": src_links[:6],
-            "published": rep["published"],
+            "published": item["published"],
         })
     stats["passed"] = len(passed)
     # newest verified first
@@ -304,31 +319,87 @@ RULES:
 """
 
 
+def _find_json_object(text):
+    """Return the first {...} block, matching braces string-aware."""
+    start = text.find("{")
+    if start < 0:
+        return None
+    depth, in_str, esc = 0, False, False
+    for i in range(start, len(text)):
+        ch = text[i]
+        if in_str:
+            if esc:
+                esc = False
+            elif ch == "\\":
+                esc = True
+            elif ch == '"':
+                in_str = False
+        elif ch == '"':
+            in_str = True
+        elif ch == "{":
+            depth += 1
+        elif ch == "}":
+            depth -= 1
+            if depth == 0:
+                return text[start:i + 1]
+    return None
+
+
+def _headline_ok(h):
+    return bool(h) and len(h) >= 2 and h[0] not in '{"' \
+        and "headline" not in h[:24].lower()
+
+
+def _harvest_headline(text):
+    for line in text.splitlines():
+        s = line.strip().strip("#").strip()
+        if not s or s.startswith("```") or s.startswith("{") \
+                or re.match(r'^"(headline|body)"\s*:', s):
+            continue
+        s = re.sub(r"<[^>]+>", "", s).strip()
+        if len(s) >= 8:
+            return s[:90]
+    return ""
+
+
+def _harvest_body(text, json_obj):
+    rest = text.replace(json_obj, " ", 1) if json_obj else text
+    lines = [l for l in rest.splitlines()
+             if l.strip() and not l.strip().startswith("```")
+             and not re.match(r'^\s*"(headline|body)"\s*:', l)]
+    rest = "\n".join(lines).strip()
+    if re.search(r"<(p|h3|ul|ol|blockquote|strong)[ >]", rest, re.I):
+        return rest  # model already returned formatted HTML
+    out = []
+    for line in lines:
+        s = line.strip()
+        if not s:
+            continue
+        s = re.sub(r"^#{1,3}\s*", "", s)
+        s = re.sub(r"\*\*(.+?)\*\*", r"<strong>\1</strong>", s)
+        if re.match(r"^<h3>", s, re.I) or len(s) < 90 and s.endswith(":"):
+            out.append(f"<h3>{htmlmod.escape(s.rstrip(':'))}</h3>")
+        else:
+            out.append(f"<p>{s if '<' in s else htmlmod.escape(s)}</p>")
+    return "\n".join(out[:12])
+
+
 def _parse_rewrite(text, fallback_title):
     """Extract headline/body from model output, robustly."""
     headline, body = "", ""
-    try:
-        m = re.search(r"\{.*\}", text, re.S)
-        if m:
-            data = json.loads(m.group(0))
-            headline = str(data.get("headline", "")).strip()
-            body = str(data.get("body", "")).strip()
-    except Exception:
-        pass
-    if not headline or not body:
-        lines = [l.strip() for l in text.strip().splitlines()
-                 if l.strip() and not l.strip().startswith("```")]
-        if lines:
-            headline = re.sub(r"^#+\s*", "",
-                              re.sub(r"<[^>]+>", "", lines[0]))[:90]
-            rest = "\n".join(lines[1:])
-            if re.search(r"<(p|h3|ul|blockquote)[ >]", rest, re.I):
-                body = rest  # model already returned formatted HTML
-            else:
-                paras = [l for l in lines[1:] if len(l) > 20][:10]
-                body = "".join(f"<p>{htmlmod.escape(p)}</p>" for p in paras)
-    if not headline:
-        headline = fallback_title[:90]
+    obj = _find_json_object(text)
+    if obj:
+        try:
+            data = json.loads(obj, strict=False)
+        except Exception:
+            data = None
+        if isinstance(data, dict):
+            headline = str(data.get("headline") or "").strip()
+            body = str(data.get("body") or "").strip()
+    if not body:
+        body = _harvest_body(text, obj)
+    if not _headline_ok(headline):
+        headline = _harvest_headline(text) or fallback_title[:90]
     if not body:
         body = f"<p>{htmlmod.escape(fallback_title)}</p>"
     # safety: never let scripts through into the blog post
@@ -412,27 +483,46 @@ def rewrite_story(story, key_status):
 
 
 # ------------------------------------------------------------ STAGE 4: IMAGE
-def extract_image(article_url):
-    """Collect the article's own high-quality image. Never adds logos."""
+def _bad_image(u):
+    d = urlparse(u).netloc.lower()
+    p = u.lower()
+    if p.endswith(".svg") or "news.google.com" in d:
+        return True
+    if "google" in d or "gstatic" in d:
+        return "logo" in p  # Google's own logo/CDN art, never article photos
+    return any(k in p for k in ("logo", "sprite", "placeholder", "avatar",
+                               "blank", "pixel", "favicon", "no-image",
+                               "default-thumb"))
+
+
+def extract_images(article_url):
+    """Collect candidate article images, best first. Never adds logos."""
+    found = []
+
+    def add(u):
+        if u and u.startswith("http") and not _bad_image(u) \
+                and u not in found:
+            found.append(u)
+
     try:
         r = http_get(article_url, timeout=15)
+        final = r.url  # after redirects -- resolve relative URLs against this
+        if "news.google.com" in urlparse(final).netloc.lower():
+            return []  # redirect never resolved; skip Google's own logo
         html = r.text
         for pat in (r'<meta[^>]+property=["\']og:image["\'][^>]+content=["\']([^"\']+)',
                     r'<meta[^>]+content=["\']([^"\']+)["\'][^>]+property=["\']og:image["\']',
                     r'<meta[^>]+name=["\']twitter:image["\'][^>]+content=["\']([^"\']+)'):
             m = re.search(pat, html, re.I)
             if m:
-                u = urljoin(article_url, htmlmod.unescape(m.group(1)).strip())
-                if u.startswith("http"):
-                    return u
-        # fallback: first plausible <img>
+                add(urljoin(final, htmlmod.unescape(m.group(1)).strip()))
         for m in re.finditer(r'<img[^>]+src=["\']([^"\']+)["\']', html, re.I):
-            u = urljoin(article_url, htmlmod.unescape(m.group(1)).strip())
-            if u.startswith("http") and not u.endswith(".svg"):
-                return u
+            add(urljoin(final, htmlmod.unescape(m.group(1)).strip()))
+            if len(found) >= 6:
+                break
     except Exception as e:
         log(f"IMAGE collect failed: {e}")
-    return None
+    return found
 
 # ----------------------------------------------------------- STAGE 5: PUBLISH
 def blogger_access_token():
@@ -486,18 +576,20 @@ def load_state():
         with open(STATE_FILE) as f:
             s = json.load(f)
             s.setdefault("seen_fps", [])
+            s.setdefault("seen_images", [])
             s.setdefault("counters", {})
             s.setdefault("total_posts", 0)
             s.setdefault("recent_posts", [])
             return s
     except Exception:
-        return {"seen_fps": [], "counters": {}, "total_posts": 0,
-                "recent_posts": []}
+        return {"seen_fps": [], "seen_images": [], "counters": {},
+                "total_posts": 0, "recent_posts": []}
 
 
 def save_state(state):
     state["seen_fps"] = state["seen_fps"][-2000:]
-    state["recent_posts"] = state["recent_posts"][:10]
+    state["seen_images"] = state.get("seen_images", [])[-500:]
+    state["recent_posts"] = state["recent_posts"][:20]
     with open(STATE_FILE, "w") as f:
         json.dump(state, f, ensure_ascii=False)
 
@@ -556,6 +648,8 @@ def main():
 
     state = load_state()
     seen = set(state["seen_fps"])
+    seen_images = set(state.get("seen_images", []))
+    recent_titles = [p.get("title", "") for p in state.get("recent_posts", [])]
     vstats = {"checked": 0, "passed": 0, "rejected": 0, "rejected_reasons": {}}
 
     if not errors:
@@ -564,17 +658,22 @@ def main():
             log(f"HUNT total: {len(items)} items")
             clusters = cluster_items(items)
             log(f"VERIFY {len(clusters)} story clusters")
-            stories, vstats = verify(clusters, seen)
+            stories, vstats = verify(clusters, seen, recent_titles)
             log(f"VERIFY passed={vstats['passed']} "
                 f"rejected={vstats['rejected']}")
             for story in stories:
                 try:
                     headline, body, via = rewrite_story(story, key_status)
-                    image = extract_image(story["link"])
+                    # fresh image only: never reuse an image already posted
+                    candidates = extract_images(story["link"])
+                    image = next((u for u in candidates
+                                  if u not in seen_images), None)
                     url = publish_post(headline, body, image,
                                        story["source_links"], story["category"])
                     log(f"PUBLISH [{via}] {headline} -> {url}")
                     seen.add(story["fingerprint"])
+                    if image:
+                        seen_images.add(image)
                     posts.append(headline)
                     state["recent_posts"].insert(0, {
                         "title": headline, "url": url,
@@ -593,6 +692,10 @@ def main():
     c = state["counters"].setdefault(today, {"runs": 0, "posts": 0})
     c["runs"] += 1
     c["posts"] += len(posts)
+    # CRITICAL: write the in-memory sets back -- otherwise dedup resets
+    # every run and the same stories get posted again and again.
+    state["seen_fps"] = sorted(seen)[-2000:]
+    state["seen_images"] = sorted(seen_images)[-500:]
     save_state(state)
     with open(STATUS_FILE, "w") as f:
         json.dump(build_status(started, state, vstats, key_status,
