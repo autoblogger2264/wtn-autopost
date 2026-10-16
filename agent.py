@@ -490,9 +490,61 @@ def _bad_image(u):
         return True
     if "google" in d or "gstatic" in d:
         return "logo" in p  # Google's own logo/CDN art, never article photos
-    return any(k in p for k in ("logo", "sprite", "placeholder", "avatar",
-                               "blank", "pixel", "favicon", "no-image",
-                               "default-thumb"))
+    name = p.rsplit("/", 1)[-1]  # filename only ("/thumb/" path is fine)
+    return any(k in name for k in ("logo", "sprite", "placeholder", "avatar",
+                                   "blank", "pixel", "favicon", "no-image",
+                                   "thumbnail", "default"))
+
+
+def image_queries_for(story):
+    """Ordered image-search queries, most specific first."""
+    filler = {"news", "today", "report", "reports", "says", "after", "amid",
+              "over", "under", "with", "from", "will", "says"}
+    words = [w for w in sig_words(story["title"])
+             if len(w) > 3 and w not in filler]
+    by_len = sorted(set(words), key=len, reverse=True)
+    queries = []
+    # intitle: pairs of the most specific words -> best relevance
+    for a, b in zip(by_len[:3], by_len[1:4]):
+        queries.append(f"intitle:{a} intitle:{b}")
+    # safe generic fallback: the news category itself
+    queries.append(story["category"])
+    return queries
+
+
+def search_image(query):
+    """Wikimedia Commons image search (free, no key). Best wide photo first.
+
+    Skips watermarked/logo-stamped files via their Commons categories --
+    Commons discourages watermarks, and tagged files are filtered out here.
+    """
+    try:
+        url = ("https://commons.wikimedia.org/w/api.php?action=query"
+               "&format=json&generator=search&gsrsearch=" +
+               quote_plus(query) +
+               "&gsrlimit=12&gsrnamespace=6&prop=imageinfo|categories"
+               "&iiprop=url|size&iiurlwidth=1280&cllimit=50")
+        r = http_get(url, timeout=15)
+        pages = r.json().get("query", {}).get("pages", {})
+        cands = []
+        for p in pages.values():
+            cats = [c.get("title", "") for c in p.get("categories", [])]
+            if any("watermark" in c.lower() for c in cats):
+                continue  # stamped/logo overlay -- never use
+            info = (p.get("imageinfo") or [{}])[0]
+            u = info.get("thumburl") or info.get("url") or ""
+            w = info.get("width") or 0
+            h = info.get("height") or 0
+            if not u or _bad_image(u) or w < 600:
+                continue
+            # prefer wide landscape photos (clickbait-friendly)
+            score = w + (500 if h and w / h >= 1.2 else 0)
+            cands.append((score, u))
+        cands.sort(reverse=True)
+        return [u for _, u in cands]
+    except Exception as e:
+        log(f"IMAGE search failed: {e}")
+        return []
 
 
 def extract_images(article_url):
@@ -668,6 +720,21 @@ def main():
                     candidates = extract_images(story["link"])
                     image = next((u for u in candidates
                                   if u not in seen_images), None)
+                    if not image:
+                        # HARD RULE: never post without a photo --
+                        # search the web for one instead.
+                        for q in image_queries_for(story):
+                            log(f"IMAGE searching: {q}")
+                            for u in search_image(q):
+                                if u not in seen_images:
+                                    image = u
+                                    break
+                            if image:
+                                break
+                    if not image:
+                        log(f"SKIP (no photo found): {story['title'][:60]}")
+                        seen.add(story["fingerprint"])
+                        continue
                     url = publish_post(headline, body, image,
                                        story["source_links"], story["category"])
                     log(f"PUBLISH [{via}] {headline} -> {url}")
