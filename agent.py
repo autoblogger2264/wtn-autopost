@@ -56,7 +56,7 @@ MIN_SOURCES = int(os.environ.get("MIN_SOURCES", "3"))
 HUNT_HOURS = float(os.environ.get("HUNT_HOURS", "2"))
 BLOG_LANGUAGE = os.environ.get("BLOG_LANGUAGE", "en")
 
-GEMINI_MODEL = os.environ.get("GEMINI_MODEL", "gemini-2.0-flash")
+GEMINI_MODEL = os.environ.get("GEMINI_MODEL", "gemini-3.6-flash")
 GROQ_MODEL = os.environ.get("GROQ_MODEL", "llama-3.3-70b-versatile")
 
 CATEGORIES = {
