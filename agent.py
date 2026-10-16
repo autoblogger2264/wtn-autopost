@@ -749,6 +749,9 @@ def main():
                         "label": story["category"],
                         "image": image or ""})
                     state["total_posts"] += 1
+                    # save after EVERY post: if the run crashes mid-batch,
+                    # the next run still knows what was published (no dupes)
+                    save_state(state)
                 except Exception as e:
                     errors.append(f"story failed: {story['title'][:60]}: {e}")
                     log(f"ERROR story: {e}")
