@@ -1,0 +1,595 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+<title>WTN — World Trend Network · Live Monitor</title>
+<meta name="description" content="Live monitoring dashboard for the WTN news auto-publisher.">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='14' fill='%23C8102E'/%3E%3Ctext x='32' y='42' font-family='Arial,sans-serif' font-size='28' font-weight='800' fill='white' text-anchor='middle'%3EW%3C/text%3E%3C/svg%3E">
+<style>
+/* ============================================================
+   WTN Live Monitor — light, premium, mobile-first
+   ============================================================ */
+:root{
+  --bg:#F6F5F1; --surface:#FFFFFF; --surface-2:#FBFAF7;
+  --ink:#16213A; --ink-soft:#3D4A63; --muted:#7A8499; --line:#E8E6E0;
+  --crimson:#C8102E; --crimson-deep:#9E0C24; --gold:#C9A227;
+  --green:#16A34A; --green-bg:#EAF7EF; --red:#DC2626; --red-bg:#FDECEC;
+  --amber:#D97706; --amber-bg:#FDF3E3; --blue:#2563EB; --blue-bg:#EAF1FE;
+  --radius:16px;
+  --shadow:0 1px 2px rgba(22,33,58,.05),0 8px 24px -12px rgba(22,33,58,.12);
+  --shadow-sm:0 1px 2px rgba(22,33,58,.06);
+  --font:-apple-system,BlinkMacSystemFont,"SF Pro Text","Segoe UI",Inter,Roboto,"Helvetica Neue",Arial,sans-serif;
+}
+*{box-sizing:border-box;margin:0;padding:0}
+html{-webkit-text-size-adjust:100%}
+body{font-family:var(--font);background:var(--bg);color:var(--ink);line-height:1.5;min-height:100vh;-webkit-font-smoothing:antialiased}
+.wrap{max-width:1080px;margin:0 auto;padding:16px 16px 40px}
+/* ---------- Header ---------- */
+.topbar{display:flex;align-items:center;gap:12px;flex-wrap:wrap;padding:14px 18px;background:var(--surface);border:1px solid var(--line);border-radius:var(--radius);box-shadow:var(--shadow);margin-bottom:16px;animation:rise .5s ease both}
+.brandmark{width:46px;height:46px;border-radius:12px;flex:0 0 auto;background:linear-gradient(135deg,var(--crimson) 0%,var(--crimson-deep) 100%);color:#fff;display:flex;align-items:center;justify-content:center;font-weight:800;font-size:19px;letter-spacing:.5px;box-shadow:0 4px 12px -4px rgba(200,16,46,.5)}
+.brand h1{font-size:19px;font-weight:800;letter-spacing:-.3px;line-height:1.2}
+.brand h1 .thin{font-weight:500;color:var(--ink-soft)}
+.brand p{font-size:12.5px;color:var(--muted);font-style:italic}
+.topbar-right{margin-left:auto;display:flex;align-items:center;gap:10px;flex-wrap:wrap}
+.live-pill{display:inline-flex;align-items:center;gap:7px;background:var(--green-bg);color:#0E7A37;border:1px solid #BDE5C8;font-size:12.5px;font-weight:700;letter-spacing:.6px;padding:6px 12px;border-radius:999px}
+.live-dot{width:9px;height:9px;border-radius:50%;background:var(--green);position:relative}
+.live-dot::after{content:"";position:absolute;inset:-4px;border-radius:50%;border:2px solid var(--green);opacity:0;animation:pulse 1.8s ease-out infinite}
+.live-pill.paused{background:#F1F2F4;color:var(--muted);border-color:var(--line)}
+.live-pill.paused .live-dot{background:var(--muted)}
+.live-pill.paused .live-dot::after{display:none}
+@keyframes pulse{0%{transform:scale(.5);opacity:.9}70%{transform:scale(1.15);opacity:0}100%{transform:scale(1.15);opacity:0}}
+.clock{text-align:right;line-height:1.35}
+.clock .t{font-size:15px;font-weight:700;font-variant-numeric:tabular-nums}
+.clock .l{font-size:11px;color:var(--muted);letter-spacing:.4px}
+.countdown{font-size:12.5px;font-weight:600;color:var(--ink-soft);background:var(--surface-2);border:1px solid var(--line);padding:6px 12px;border-radius:999px;font-variant-numeric:tabular-nums}
+.countdown b{color:var(--crimson);font-variant-numeric:tabular-nums}
+/* ---------- Notice / empty states ---------- */
+.notice{display:flex;gap:12px;align-items:flex-start;background:#FFFBEB;border:1px solid #F3DFAE;color:#7A5410;border-radius:var(--radius);padding:14px 16px;margin-bottom:16px;font-size:14px;animation:rise .5s ease both}
+.notice code{background:rgba(0,0,0,.06);padding:2px 6px;border-radius:6px;font-size:13px}
+.notice .icon{font-size:20px;flex:0 0 auto}
+.empty-hero{text-align:center;padding:56px 24px;background:var(--surface);border:1px dashed var(--line);border-radius:var(--radius);margin-bottom:16px;animation:rise .5s ease both}
+.empty-hero h2{font-size:18px;font-weight:700;margin-bottom:6px}
+.empty-hero p{color:var(--muted);font-size:14px;max-width:430px;margin:0 auto}
+.spin{display:inline-block;width:34px;height:34px;border-radius:50%;border:3px solid var(--line);border-top-color:var(--crimson);animation:spin 1s linear infinite;margin-bottom:12px}
+@keyframes spin{to{transform:rotate(360deg)}}
+/* ---------- Sections ---------- */
+.section{margin:22px 0 12px;animation:rise .5s ease both}
+.section h2{font-size:13px;font-weight:800;letter-spacing:1.2px;text-transform:uppercase;color:var(--ink-soft)}
+.section h2 .rule{display:block;height:2px;width:34px;background:var(--gold);border-radius:2px;margin-top:6px}
+.section-sub{font-size:12.5px;color:var(--muted);margin-top:4px}
+/* ---------- Stat cards ---------- */
+.stats{display:grid;grid-template-columns:repeat(2,1fr);gap:12px}
+.stat{background:var(--surface);border:1px solid var(--line);border-radius:var(--radius);padding:16px;box-shadow:var(--shadow-sm);position:relative;overflow:hidden;animation:rise .5s ease both}
+.stat::before{content:"";position:absolute;top:0;left:0;right:0;height:3px;background:linear-gradient(90deg,var(--crimson),var(--gold));opacity:.85}
+.stat:nth-child(2)::before{background:linear-gradient(90deg,var(--blue),#7AA5F8)}
+.stat:nth-child(3)::before{background:linear-gradient(90deg,var(--gold),#E7C65B)}
+.stat:nth-child(4)::before{background:linear-gradient(90deg,var(--green),#5FC98A)}
+.stat .num{font-size:30px;font-weight:800;letter-spacing:-.5px;font-variant-numeric:tabular-nums;line-height:1.1}
+.stat .lbl{font-size:12.5px;color:var(--muted);margin-top:4px;font-weight:600}
+.stat.flash{animation:flash .8s ease}
+@keyframes flash{0%{box-shadow:0 0 0 0 rgba(200,16,46,0)}30%{box-shadow:0 0 0 4px rgba(200,16,46,.18)}100%{box-shadow:var(--shadow-sm)}}
+@keyframes rise{from{opacity:0;transform:translateY(10px)}to{opacity:1;transform:none}}
+/* ---------- Cards ---------- */
+.card{background:var(--surface);border:1px solid var(--line);border-radius:var(--radius);box-shadow:var(--shadow-sm);padding:16px;margin-bottom:12px;animation:rise .5s ease both}
+.card h3{font-size:15px;font-weight:700;margin-bottom:10px}
+.muted{color:var(--muted);font-size:13px}
+/* ---------- Bar chart ---------- */
+.chart{display:flex;align-items:flex-end;gap:10px;height:172px;padding:8px 4px 0}
+.bar-col{flex:1;display:flex;flex-direction:column;align-items:center;gap:6px;min-width:0}
+.bar-track{width:100%;max-width:44px;height:118px;display:flex;align-items:flex-end;background:var(--surface-2);border-radius:8px;overflow:hidden;border:1px solid var(--line)}
+.bar{width:100%;border-radius:8px 8px 0 0;background:linear-gradient(180deg,#E0445F 0%,var(--crimson) 60%,var(--crimson-deep) 100%);transition:height 1s cubic-bezier(.2,.8,.2,1);min-height:3px}
+.bar.zero{background:var(--line)}
+.bar-val{font-size:12px;font-weight:700;font-variant-numeric:tabular-nums}
+.bar-day{font-size:10.5px;color:var(--muted);font-weight:600;white-space:nowrap}
+/* ---------- Pipeline ---------- */
+.pipeline{display:flex;align-items:stretch;overflow-x:auto;padding:6px 2px}
+.pstep{flex:1 1 0;min-width:100px;text-align:center;padding:10px 4px}
+.pstep .node{width:46px;height:46px;margin:0 auto 8px;border-radius:50%;background:var(--surface);border:2px solid var(--line);display:flex;align-items:center;justify-content:center;font-size:20px;box-shadow:var(--shadow-sm);transition:border-color .3s}
+.pstep.done .node{border-color:var(--green);background:var(--green-bg)}
+.pstep .nm{font-size:12px;font-weight:700}
+.pstep .ds{font-size:10.5px;color:var(--muted)}
+.pstep .tick{font-size:10px;color:var(--green);font-weight:700;margin-top:2px}
+.plink{flex:0 0 24px;align-self:center;height:3px;border-radius:2px;background:linear-gradient(90deg,var(--line) 50%,transparent 50%);background-size:12px 3px;animation:flow 1.2s linear infinite}
+@keyframes flow{to{background-position:12px 0}}
+.plink.done{background:var(--green);animation:none}
+/* ---------- Posts ---------- */
+.post{display:flex;gap:12px;padding:12px;border:1px solid var(--line);border-radius:12px;margin-bottom:10px;background:var(--surface);text-decoration:none;color:inherit;transition:transform .2s ease,box-shadow .2s ease;animation:rise .5s ease both}
+.post:hover{transform:translateY(-2px);box-shadow:var(--shadow)}
+.post .thumb{width:88px;height:88px;flex:0 0 88px;border-radius:10px;object-fit:cover;background:var(--line)}
+.post .thumb-fallback{width:88px;height:88px;flex:0 0 88px;border-radius:10px;background:linear-gradient(135deg,#2B3A5E 0%,#C8102E 130%);display:flex;align-items:center;justify-content:center;color:#fff;font-weight:800;font-size:24px;letter-spacing:1px}
+.post .body{min-width:0;flex:1}
+.post .title{font-size:14px;font-weight:700;line-height:1.35;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}
+.post .meta{display:flex;align-items:center;gap:8px;margin-top:8px;flex-wrap:wrap}
+.chip{font-size:10.5px;font-weight:700;letter-spacing:.4px;text-transform:uppercase;background:var(--blue-bg);color:var(--blue);padding:3px 9px;border-radius:999px}
+.post time{font-size:12px;color:var(--muted)}
+.post .go{margin-left:auto;color:var(--muted);font-size:16px;flex:0 0 auto}
+/* ---------- Verifier ---------- */
+.vgrid{display:grid;grid-template-columns:repeat(3,1fr);gap:10px;margin-bottom:14px}
+.vstat{background:var(--surface-2);border:1px solid var(--line);border-radius:12px;padding:12px;text-align:center}
+.vstat .n{font-size:22px;font-weight:800;font-variant-numeric:tabular-nums}
+.vstat .l{font-size:11.5px;color:var(--muted);font-weight:600;margin-top:2px}
+.vstat.good .n{color:var(--green)} .vstat.bad .n{color:var(--red)}
+.rrow{margin-bottom:10px}.rrow:last-child{margin-bottom:0}
+.rrow .top{display:flex;justify-content:space-between;font-size:13px;margin-bottom:5px}
+.rrow .top b{font-variant-numeric:tabular-nums}
+.rtrack{height:8px;background:var(--surface-2);border:1px solid var(--line);border-radius:99px;overflow:hidden}
+.rfill{height:100%;border-radius:99px;width:0;transition:width 1s cubic-bezier(.2,.8,.2,1)}
+.rfill.r1{background:linear-gradient(90deg,#F0A35E,var(--amber))}
+.rfill.r2{background:linear-gradient(90deg,#E0445F,var(--crimson))}
+.rfill.r3{background:linear-gradient(90deg,#8B93A8,#5B6478)}
+/* ---------- Keys ---------- */
+.keyrow{display:flex;align-items:center;gap:10px;padding:10px 0;border-bottom:1px solid var(--line)}
+.keyrow:last-child{border-bottom:none}
+.keyrow .nm{font-size:14px;font-weight:600;flex:1}
+.keyrow .st{font-size:12px;color:var(--muted)}
+.dots{display:flex;gap:6px}
+.dot{width:13px;height:13px;border-radius:50%;background:var(--line);border:1px solid #D8D5CC}
+.dot.ok{background:var(--green);border-color:var(--green);box-shadow:0 0 0 3px rgba(22,163,74,.15)}
+.dot.bad{background:var(--red);border-color:var(--red)}
+.pillok{font-size:11.5px;font-weight:700;padding:4px 11px;border-radius:999px;background:var(--green-bg);color:#0E7A37;border:1px solid #BDE5C8}
+.pillbad{font-size:11.5px;font-weight:700;padding:4px 11px;border-radius:999px;background:var(--red-bg);color:#A11F1F;border:1px solid #F3C1C1}
+/* ---------- Runs ---------- */
+.run{display:flex;align-items:center;gap:12px;padding:11px 4px;border-bottom:1px solid var(--line);text-decoration:none;color:inherit}
+.run:last-child{border-bottom:none}
+.run .ric{width:34px;height:34px;flex:0 0 34px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:15px;font-weight:800;color:#fff}
+.ric.ok{background:var(--green)} .ric.fail{background:var(--red)} .ric.run{background:var(--blue)} .ric.idle{background:#9AA2B5}
+.ric.run .spin2{width:15px;height:15px;border-radius:50%;border:2.5px solid rgba(255,255,255,.4);border-top-color:#fff;animation:spin .8s linear infinite}
+.run .rb{flex:1;min-width:0}
+.run .rn{font-size:13.5px;font-weight:700;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.run .rm{font-size:12px;color:var(--muted)}
+.run .go{color:var(--muted)}
+/* ---------- Errors ---------- */
+#errorsCard{border-color:#F3C1C1;background:#FFF7F7}
+#errorsCard h3{color:#A11F1F}
+.err{background:#fff;border:1px solid #F3C1C1;border-left:4px solid var(--red);border-radius:8px;padding:10px 12px;font-size:13px;margin-bottom:8px;color:#7A1E1E;word-break:break-word}
+.err:last-child{margin-bottom:0}
+/* ---------- Quick links ---------- */
+.qlinks{display:grid;grid-template-columns:1fr;gap:10px}
+.qlink{display:flex;align-items:center;gap:12px;background:var(--surface);border:1px solid var(--line);border-radius:12px;padding:14px 16px;text-decoration:none;color:var(--ink);font-weight:700;font-size:14.5px;box-shadow:var(--shadow-sm);transition:transform .2s ease,box-shadow .2s ease;animation:rise .5s ease both}
+.qlink:hover{transform:translateY(-2px);box-shadow:var(--shadow)}
+.qlink .qi{width:38px;height:38px;flex:0 0 38px;border-radius:10px;display:flex;align-items:center;justify-content:center;font-size:18px;color:#fff}
+.qlink small{display:block;font-weight:500;color:var(--muted);font-size:12px}
+.qlink .go{margin-left:auto;color:var(--muted)}
+/* ---------- Footer ---------- */
+footer{margin-top:26px;text-align:center;color:var(--muted);font-size:12.5px;padding:18px 12px;border-top:1px solid var(--line)}
+footer .wtn{font-weight:800;color:var(--ink-soft);letter-spacing:.4px}
+.updated-line{font-size:12px;color:var(--muted);margin-top:8px;font-variant-numeric:tabular-nums}
+.hidden{display:none!important}
+@media(min-width:720px){
+  .wrap{padding:24px 24px 48px}
+  .stats{grid-template-columns:repeat(4,1fr)}
+  .qlinks{grid-template-columns:repeat(3,1fr)}
+  .brand h1{font-size:21px}
+  .stat .num{font-size:34px}
+}
+@media(prefers-reduced-motion:reduce){*,*::before,*::after{animation:none!important;transition:none!important}}
+</style>
+</head>
+<body>
+<div class="wrap">
+
+  <!-- ======= Header ======= -->
+  <header class="topbar">
+    <div class="brandmark">W</div>
+    <div class="brand">
+      <h1>WTN <span class="thin">— World Trend Network</span></h1>
+      <p>World trends, as they happen.</p>
+    </div>
+    <div class="topbar-right">
+      <span class="live-pill paused" id="livePill"><span class="live-dot"></span><span id="liveText">OFFLINE</span></span>
+      <div class="clock">
+        <div class="t" id="utcClock">--:--:--</div>
+        <div class="l">UTC TIME</div>
+      </div>
+      <div class="countdown" id="countdown">Next run: <b>—</b></div>
+    </div>
+  </header>
+
+  <!-- Setup notice (shown only when REPO is not configured) -->
+  <div class="notice hidden" id="setupNotice">
+    <span class="icon">⚙️</span>
+    <div><strong>One-time setup:</strong> open this file and set <code>const REPO = "yourname/wtn-autopost"</code> at the top of the script (marked EDIT THIS). Then reload.</div>
+  </div>
+
+  <!-- Fetch error notice -->
+  <div class="notice hidden" id="fetchNotice">
+    <span class="icon">📡</span>
+    <div><strong>Couldn't reach GitHub.</strong> Check your connection — retrying automatically. <span id="fetchDetail" class="muted"></span></div>
+  </div>
+
+  <!-- Empty state: waiting for the first backend run -->
+  <div class="empty-hero hidden" id="emptyHero">
+    <div class="spin"></div>
+    <h2>Waiting for first run…</h2>
+    <p>The auto-publisher hasn't written <code>status.json</code> yet. Trigger the workflow once from the GitHub Actions tab, then reload this page.</p>
+  </div>
+
+  <!-- ======= Main dashboard (hidden until first successful fetch) ======= -->
+  <main id="dash" class="hidden">
+
+    <div class="section"><h2>Today at a glance<span class="rule"></span></h2></div>
+    <div class="stats">
+      <div class="stat" id="statPostsToday"><div class="num" data-count>—</div><div class="lbl">Posts today</div></div>
+      <div class="stat" id="statPostsTotal"><div class="num" data-count>—</div><div class="lbl">Total posts</div></div>
+      <div class="stat" id="statRunsToday"><div class="num" data-count>—</div><div class="lbl">Runs today</div></div>
+      <div class="stat" id="statPassRate"><div class="num" data-count>—</div><div class="lbl">Verify pass rate</div></div>
+    </div>
+
+    <div class="section">
+      <h2>Posts — last 7 days<span class="rule"></span></h2>
+    </div>
+    <div class="card"><div class="chart" id="chart"></div></div>
+
+    <div class="section">
+      <h2>Publishing pipeline<span class="rule"></span></h2>
+      <div class="section-sub">How every run flows, end to end.</div>
+    </div>
+    <div class="card"><div class="pipeline" id="pipeline"></div></div>
+
+    <div class="section">
+      <h2>Latest posts<span class="rule"></span></h2>
+    </div>
+    <div id="posts"><p class="muted">No posts yet.</p></div>
+
+    <div class="section">
+      <h2>Truth verifier<span class="rule"></span></h2>
+      <div class="section-sub">Every candidate story is checked before it can publish.</div>
+    </div>
+    <div class="card">
+      <div class="vgrid">
+        <div class="vstat"><div class="n" id="vChecked">—</div><div class="l">Checked</div></div>
+        <div class="vstat good"><div class="n" id="vPassed">—</div><div class="l">Passed</div></div>
+        <div class="vstat bad"><div class="n" id="vRejected">—</div><div class="l">Rejected</div></div>
+      </div>
+      <div id="rejReasons"></div>
+    </div>
+
+    <div class="section">
+      <h2>AI keys health<span class="rule"></span></h2>
+    </div>
+    <div class="card" id="keysCard"><p class="muted">No key data yet.</p></div>
+
+    <div class="section">
+      <h2>Recent workflow runs<span class="rule"></span></h2>
+      <div class="section-sub">Live from the GitHub Actions API.</div>
+    </div>
+    <div class="card" id="runsCard"><p class="muted">Loading runs…</p></div>
+
+    <div class="card hidden" id="errorsCard">
+      <h3>⚠️ Errors</h3>
+      <div id="errorsList"></div>
+    </div>
+
+    <div class="section">
+      <h2>Quick links<span class="rule"></span></h2>
+    </div>
+    <div class="qlinks">
+      <a class="qlink" id="linkBlog" href="#" target="_blank" rel="noopener">
+        <span class="qi" style="background:linear-gradient(135deg,#C8102E,#9E0C24)">📰</span>
+        <span>Open blog<small>See published posts live</small></span><span class="go">→</span>
+      </a>
+      <a class="qlink" id="linkRepo" href="#" target="_blank" rel="noopener">
+        <span class="qi" style="background:linear-gradient(135deg,#2B3A5E,#16213A)">💻</span>
+        <span>GitHub repo<small>Code, status &amp; history</small></span><span class="go">→</span>
+      </a>
+      <a class="qlink" id="linkActions" href="#" target="_blank" rel="noopener">
+        <span class="qi" style="background:linear-gradient(135deg,#C9A227,#8A6D1B)">▶</span>
+        <span>Manual trigger<small>Run the workflow now</small></span><span class="go">→</span>
+      </a>
+    </div>
+
+  </main>
+
+  <footer>
+    <div class="wtn">WTN — WORLD TREND NETWORK</div>
+    <div>Live monitor · auto-refreshes every 30 seconds</div>
+    <div class="updated-line" id="updatedLine">Not connected yet.</div>
+  </footer>
+
+</div>
+<script>
+/* ============================================================
+   CONFIG — EDIT THIS
+   ============================================================ */
+const REPO = "autoblogger2264/wtn-autopost";   // your GitHub repo
+const BLOG_URL = "https://wtnlive.blogspot.com"; // EDIT THIS: your Blogger blog URL
+
+/* Derived endpoints (public repo — no auth needed) */
+const STATUS_URL = "https://raw.githubusercontent.com/" + REPO + "/main/status.json";
+const RUNS_URL = "https://api.github.com/repos/" + REPO + "/actions/runs?per_page=8";
+const CONFIGURED = REPO.indexOf("USERNAME/") !== 0;
+
+/* ---------------- State ---------------- */
+const S = { status:null, runs:[], lastOk:0, nextRunMs:null, statusErr:false };
+
+/* Refresh-proof: cache last good data in this browser so a reload never
+   shows an empty dashboard -- cached data renders instantly, then fresh
+   data replaces it when the fetch completes. */
+function loadCache(){
+  try{
+    var c=JSON.parse(localStorage.getItem("wtn_cache")||"null");
+    if(c&&c.status){ S.status=c.status; S.lastOk=c.when||0; renderStatus(c.status); }
+    if(c&&c.runs){ S.runs=c.runs; renderRuns(c.runs); }
+  }catch(e){}
+}
+function saveCache(){
+  try{ localStorage.setItem("wtn_cache", JSON.stringify({status:S.status, runs:S.runs, when:S.lastOk})); }catch(e){}
+}
+
+/* ---------------- Helpers ---------------- */
+function $(id){ return document.getElementById(id); }
+function esc(s){ return String(s==null?"":s).replace(/[&<>"']/g,function(c){ return {"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]; }); }
+/* Parse "2026-10-17 01:30 UTC" -> ms epoch (UTC). Null on bad input. */
+function parseUTC(s){
+  var m=/^(\d{4})-(\d{2})-(\d{2}) (\d{2}):(\d{2}) UTC$/.exec(String(s||"").trim());
+  if(!m) return null;
+  return Date.UTC(+m[1],+m[2]-1,+m[3],+m[4],+m[5]);
+}
+function ago(ms){
+  var s=Math.max(0,Math.round(ms/1000));
+  if(s<5) return "just now";
+  if(s<60) return s+"s ago";
+  var m=Math.floor(s/60);
+  if(m<60) return m+"m ago";
+  var h=Math.floor(m/60);
+  if(h<24) return h+"h "+(m%60)+"m ago";
+  return Math.floor(h/24)+"d "+(h%24)+"h ago";
+}
+function fmtDur(ms){
+  if(ms==null||ms<0) return "—";
+  var s=Math.round(ms/1000);
+  if(s<60) return s+"s";
+  return Math.floor(s/60)+"m "+(s%60)+"s";
+}
+function fmtCountdown(ms){
+  if(ms==null) return "—";
+  if(ms<0) return "due now";
+  var s=Math.floor(ms/1000), h=Math.floor(s/3600), m=Math.floor((s%3600)/60), ss=s%60;
+  var p=function(n){ return (n<10?"0":"")+n; };
+  return h>0 ? h+"h "+p(m)+"m" : m+"m "+p(ss)+"s";
+}
+/* Animated number counter. to==null renders an em dash. */
+function animateCount(el,to,suffix){
+  suffix=suffix||"";
+  var from=parseFloat(el.getAttribute("data-v")||"NaN");
+  el.setAttribute("data-v", to==null?"":to);
+  if(isNaN(from)||to==null||from===to){ el.textContent=(to==null?"—":to+suffix); return; }
+  var t0=performance.now(), dur=700;
+  (function step(t){
+    var p=Math.min(1,(t-t0)/dur), e=1-Math.pow(1-p,3);
+    el.textContent=Math.round(from+(to-from)*e)+suffix;
+    if(p<1) requestAnimationFrame(step);
+  })(t0);
+}
+/* Subtle highlight pulse on the stat cards after each refresh */
+function flashStats(){
+  document.querySelectorAll(".stat").forEach(function(el){
+    el.classList.remove("flash"); void el.offsetWidth; el.classList.add("flash");
+  });
+}
+
+/* ---------------- Data fetching ---------------- */
+async function fetchStatus(){
+  if(!CONFIGURED) return;
+  try{
+    var r=await fetch(STATUS_URL,{cache:"no-store"});
+    if(!r.ok) throw new Error("HTTP "+r.status);
+    var j=await r.json();
+    S.status=j; S.lastOk=Date.now(); S.statusErr=false;
+    saveCache();
+    $("fetchNotice").classList.add("hidden");
+    renderStatus(j); flashStats();
+  }catch(e){
+    S.statusErr=true;
+    $("fetchDetail").textContent="("+e.message+")";
+    $("fetchNotice").classList.remove("hidden");
+    if(!S.status) $("emptyHero").classList.remove("hidden");
+  }
+  updateLive();
+}
+async function fetchRuns(){
+  if(!CONFIGURED) return;
+  try{
+    var r=await fetch(RUNS_URL,{cache:"no-store",headers:{"Accept":"application/vnd.github+json"}});
+    if(!r.ok) throw new Error("HTTP "+r.status);
+    var j=await r.json();
+    S.runs=j.workflow_runs||[];
+    saveCache();
+    renderRuns(S.runs);
+  }catch(e){
+    $("runsCard").innerHTML='<p class="muted">Could not load workflow runs ('+esc(e.message)+'). Retrying…</p>';
+  }
+}
+/* ---------------- Render: full status ---------------- */
+function renderStatus(j){
+  j=j||{};
+  $("dash").classList.remove("hidden");
+  $("emptyHero").classList.add("hidden");
+
+  /* Stat cards */
+  var vt=j.verifier||{};
+  var checked=+vt.checked||0, passed=+vt.passed||0;
+  var rate=checked>0?Math.round(passed/checked*100):null;
+  animateCount($("statPostsToday").querySelector("[data-count]"), j.posts_today==null?null:+j.posts_today);
+  animateCount($("statPostsTotal").querySelector("[data-count]"), j.posts_total==null?null:+j.posts_total);
+  animateCount($("statRunsToday").querySelector("[data-count]"), j.runs_today==null?null:+j.runs_today);
+  animateCount($("statPassRate").querySelector("[data-count]"), rate, "%");
+
+  renderChart(j.history);
+  renderPipeline(j.status==="ok");
+  renderPosts(j.last_posts);
+  renderVerifier(vt);
+  renderKeys(j.keys);
+  renderErrors(j.errors);
+  S.nextRunMs=parseUTC(j.next_run);
+}
+
+/* ---------------- Render: 7-day bar chart ---------------- */
+function renderChart(hist){
+  var el=$("chart"); el.innerHTML="";
+  hist=(hist||[]).slice(-7);
+  if(!hist.length){ el.innerHTML='<p class="muted" style="margin:auto">No history yet — bars appear after a few runs.</p>'; return; }
+  var max=Math.max.apply(null,hist.map(function(h){return +h.posts||0;}).concat([1]));
+  hist.forEach(function(h){
+    var v=+h.posts||0;
+    var col=document.createElement("div"); col.className="bar-col";
+    col.innerHTML='<div class="bar-val">'+v+'</div>'+
+      '<div class="bar-track"><div class="bar'+(v===0?" zero":"")+'" style="height:2%"></div></div>'+
+      '<div class="bar-day">'+esc(String(h.date||"").slice(5))+'</div>';
+    el.appendChild(col);
+    var bar=col.querySelector(".bar"), target=Math.max(3,Math.round(v/max*100));
+    requestAnimationFrame(function(){ requestAnimationFrame(function(){ bar.style.height=target+"%"; }); });
+  });
+}
+
+/* ---------------- Render: pipeline strip ---------------- */
+var STEPS=[
+  ["\uD83D\uDD0D","Hunt","Find trending news"],
+  ["✅","Verify","Truth-check stories"],
+  ["✍️","Rewrite","AI rewrite"],
+  ["\uD83D\uDDBC️","Image","Collect visual"],
+  ["🚀","Publish","Post live"]
+];
+function renderPipeline(ok){
+  var el=$("pipeline"); el.innerHTML="";
+  STEPS.forEach(function(s,i){
+    var d=document.createElement("div"); d.className="pstep"+(ok?" done":"");
+    d.innerHTML='<div class="node">'+s[0]+'</div><div class="nm">'+s[1]+'</div><div class="ds">'+s[2]+'</div>'+
+      (ok?'<div class="tick">✓ last run</div>':"");
+    el.appendChild(d);
+    if(i<STEPS.length-1){ var l=document.createElement("div"); l.className="plink"+(ok?" done":""); el.appendChild(l); }
+  });
+}
+
+/* ---------------- Render: latest posts ---------------- */
+function renderPosts(list){
+  var el=$("posts"); el.innerHTML="";
+  list=list||[];
+  if(!list.length){ el.innerHTML='<p class="muted">No posts yet — they will appear here after the first successful run.</p>'; return; }
+  list.forEach(function(p,i){
+    var a=document.createElement("a");
+    a.className="post"; a.href=p.url||"#"; a.target="_blank"; a.rel="noopener";
+    a.style.animationDelay=(i*0.06)+"s";
+    var thumb=p.image
+      ? '<img class="thumb" loading="lazy" src="'+esc(p.image)+'" alt="" onerror="this.outerHTML=\'<div class=&quot;thumb-fallback&quot;>W</div>\'">'
+      : '<div class="thumb-fallback">W</div>';
+    a.innerHTML=thumb+'<div class="body"><div class="title">'+esc(p.title||"(untitled)")+'</div>'+
+      '<div class="meta">'+(p.label?'<span class="chip">'+esc(p.label)+'</span>':"")+
+      (p.time?'<time>'+esc(p.time)+'</time>':"")+'<span class="go">→</span></div></div>';
+    el.appendChild(a);
+  });
+}
+
+/* ---------------- Render: verifier ---------------- */
+function renderVerifier(v){
+  v=v||{};
+  var checked=+v.checked||0, passed=+v.passed||0, rejected=+v.rejected||0;
+  $("vChecked").textContent=checked;
+  $("vPassed").textContent=passed;
+  $("vRejected").textContent=rejected;
+  var rr=v.rejected_reasons||{};
+  var rows=[
+    ["Single source — not corroborated", +rr.single_source||0, "r1"],
+    ["Harm-category — never auto-posted", +rr.harm||0, "r2"],
+    ["Duplicate — already posted", +rr.duplicate||0, "r3"]
+  ];
+  var max=Math.max.apply(null,rows.map(function(r){return r[1];}).concat([1]));
+  var el=$("rejReasons"); el.innerHTML="";
+  rows.forEach(function(r){
+    var d=document.createElement("div"); d.className="rrow";
+    d.innerHTML='<div class="top"><span>'+r[0]+'</span><b>'+r[1]+'</b></div>'+
+      '<div class="rtrack"><div class="rfill '+r[2]+'" style="width:0%"></div></div>';
+    el.appendChild(d);
+    var f=d.querySelector(".rfill"), w=Math.round(r[1]/max*100);
+    requestAnimationFrame(function(){ requestAnimationFrame(function(){ f.style.width=w+"%"; }); });
+  });
+}
+
+/* ---------------- Render: AI keys ---------------- */
+function renderKeys(k){
+  k=k||{};
+  var el=$("keysCard");
+  var total=+k.gemini_keys_total||0, okc=+k.gemini_keys_ok||0, dots="";
+  for(var i=0;i<total;i++) dots+='<span class="dot '+(i<okc?"ok":"bad")+'" title="Gemini key '+(i+1)+(i<okc?" — healthy":" — failing")+'"></span>';
+  if(!total) dots='<span class="muted">—</span>';
+  var g=String(k.groq==null?"":k.groq);
+  var gPill=g.toLowerCase()==="ok"
+    ? '<span class="pillok">● Operational</span>'
+    : '<span class="pillbad">● '+esc(g||"unknown")+'</span>';
+  el.innerHTML=
+    '<div class="keyrow"><div class="nm">Gemini keys</div><div class="dots">'+dots+'</div><div class="st">'+okc+' / '+total+' healthy</div></div>'+
+    '<div class="keyrow"><div class="nm">Groq fallback</div>'+gPill+'</div>';
+}
+
+/* ---------------- Render: workflow runs ---------------- */
+function renderRuns(runs){
+  var el=$("runsCard"); el.innerHTML="";
+  if(!runs.length){ el.innerHTML='<p class="muted">No workflow runs found yet.</p>'; return; }
+  runs.forEach(function(w){
+    var st=w.status, con=w.conclusion, cls="idle", icon="•", label=con||st||"unknown";
+    if(st==="in_progress"||st==="queued"){ cls="run"; icon='<span class="spin2"></span>'; label=String(st).replace("_"," "); }
+    else if(con==="success"){ cls="ok"; icon="✓"; label="success"; }
+    else if(con==="failure"){ cls="fail"; icon="✕"; label="failed"; }
+    var start=w.run_started_at?Date.parse(w.run_started_at):null;
+    var end=w.updated_at?Date.parse(w.updated_at):null;
+    var dur=(start&&end&&st==="completed")?fmtDur(end-start):(st==="in_progress"&&start?fmtDur(Date.now()-start):"—");
+    var when=w.created_at?ago(Date.now()-Date.parse(w.created_at)):"—";
+    var a=document.createElement("a");
+    a.className="run"; a.href=w.html_url||"#"; a.target="_blank"; a.rel="noopener";
+    a.innerHTML='<div class="ric '+cls+'">'+icon+'</div>'+
+      '<div class="rb"><div class="rn">'+esc(w.name||"workflow")+'</div>'+
+      '<div class="rm">'+esc(label)+' · '+esc(when)+' · ⏱ '+esc(dur)+'</div></div><span class="go">→</span>';
+    el.appendChild(a);
+  });
+}
+
+/* ---------------- Render: errors ---------------- */
+function renderErrors(errs){
+  var card=$("errorsCard"), list=$("errorsList");
+  errs=errs||[];
+  if(!errs.length){ card.classList.add("hidden"); return; }
+  card.classList.remove("hidden"); list.innerHTML="";
+  errs.forEach(function(e){
+    var d=document.createElement("div"); d.className="err"; d.textContent=String(e); list.appendChild(d);
+  });
+}
+
+/* ---------------- Live pill ---------------- */
+function updateLive(){
+  var pill=$("livePill"), txt=$("liveText");
+  if(S.status&&!S.statusErr){ pill.classList.remove("paused"); txt.textContent="LIVE"; }
+  else{ pill.classList.add("paused"); txt.textContent="OFFLINE"; }
+}
+
+/* ---------------- 1-second ticker: UTC clock, updated-ago, countdown ---------------- */
+function tick(){
+  var now=new Date(), p=function(n){ return (n<10?"0":"")+n; };
+  $("utcClock").textContent=p(now.getUTCHours())+":"+p(now.getUTCMinutes())+":"+p(now.getUTCSeconds());
+  if(S.lastOk>0) $("updatedLine").textContent="Data updated "+ago(Date.now()-S.lastOk)+" · status.json every 30s · runs every 60s";
+  $("countdown").innerHTML="Next run: <b>"+esc(fmtCountdown(S.nextRunMs==null?null:S.nextRunMs-Date.now()))+"</b>";
+}
+
+/* ---------------- Init ---------------- */
+function init(){
+  $("linkBlog").href=BLOG_URL;
+  $("linkRepo").href="https://github.com/"+REPO;
+  $("linkActions").href="https://github.com/"+REPO+"/actions";
+  if(!CONFIGURED){
+    $("setupNotice").classList.remove("hidden");
+    $("emptyHero").classList.remove("hidden");
+    $("emptyHero").querySelector("p").textContent="Set const REPO at the top of this file's script (marked EDIT THIS), then reload.";
+    updateLive(); tick(); setInterval(tick,1000);
+    return;
+  }
+  renderPipeline(false);
+  $("emptyHero").classList.remove("hidden");
+  loadCache();  /* instant: show last good data so refresh never loses anything */
+  tick(); setInterval(tick,1000);
+  fetchStatus(); setInterval(fetchStatus,30000);
+  fetchRuns(); setInterval(fetchRuns,60000);
+}
+document.addEventListener("DOMContentLoaded",init);
+</script>
+</body>
+</html>
