@@ -205,6 +205,13 @@ def sig_words(t):
     return {w for w in normalize_title(t).split() if w not in _STOP and len(w) > 2}
 
 
+def sig_overlap(a, b):
+    """0..1 title similarity between two sig-word sets."""
+    if not a or not b:
+        return 0.0
+    return len(a & b) / max(len(a), len(b))
+
+
 def cluster_items(items):
     """Group items that describe the same story."""
     clusters, used = [], [False] * len(items)
@@ -252,50 +259,115 @@ def _is_near_dup(title, recent_titles, thresh=0.5):
     return False
 
 
-def verify(clusters, seen_fps, recent_titles=()):
-    """Truth check. Returns (passed, stats). passed = list of story dicts."""
-    passed, stats = [], {"checked": len(clusters), "passed": 0,
-                         "rejected": 0, "rejected_reasons": {}}
+def fetch_verify(query):
+    """Corroboration search: is this story reported by other outlets?
 
-    def reject(reason):
-        stats["rejected"] += 1
-        rr = stats["rejected_reasons"]
-        rr[reason] = rr.get(reason, 0) + 1
+    Uses a wider 24h window -- the story itself is already known fresh;
+    here we only need independent outlets reporting the SAME story.
+    """
+    url = ("https://news.google.com/rss/search?q=" + quote_plus(query) +
+           "+when%3A24h&hl=en-US&gl=US&ceid=US%3Aen")
+    items = []
+    try:
+        r = http_get(url)
+        root = ET.fromstring(r.content)
+        for it in root.iter("item"):
+            try:
+                title = (it.findtext("title") or "").strip()
+                link = (it.findtext("link") or "").strip()
+                if not title or not link:
+                    continue
+                src_el = it.find("source")
+                src_url = src_el.get("url") if src_el is not None else ""
+                domain = domain_of(src_url) or domain_of(link)
+                if not domain or "news.google.com" in domain:
+                    continue
+                items.append({"title": htmlmod.unescape(title),
+                              "link": link, "domain": domain})
+            except Exception:
+                continue
+    except Exception as e:
+        log(f"VERIFY search failed for {query[:40]}: {e}")
+    return items
 
+
+def _verify_query(title):
+    """Focused keyword query for corroboration search."""
+    filler = {"news", "today", "report", "reports", "says", "after", "amid",
+              "over", "under", "with", "from", "will", "breaking", "live",
+              "update", "updates"}
+    words = [w for w in sig_words(title)
+             if len(w) > 3 and w not in filler]
+    by_len = sorted(set(words), key=len, reverse=True)
+    return " ".join(by_len[:5])
+
+
+def verify_candidate(item, seen_fps, recent_titles):
+    """STAGE 2 -- VERIFIER. Actively corroborate ONE story.
+
+    Searches Google News for the story's key terms, keeps only results
+    really about the SAME story (title overlap), and counts independent
+    outlets. Pass rule: 3+ outlets incl. 1 reputable, OR 2 reputable.
+    Returns (story_dict | None, reason).
+    """
+    title = item["title"]
+    if has_harm(title):
+        return None, "harm"
+    fp = fingerprint([item])
+    if fp in seen_fps or _is_near_dup(title, recent_titles):
+        return None, "duplicate"
+
+    query = _verify_query(title)
+    if not query:
+        return None, "no_query"
+    results = fetch_verify(query)
+    time.sleep(1)  # politeness between verification searches
+
+    csig = sig_words(title)
+    doms, rep_doms, src_links, seen_d = set(), set(), set(), set()
+    for r in results:
+        # strict: same keywords but different story must NOT corroborate
+        if sig_overlap(csig, sig_words(r["title"])) < 0.45:
+            continue
+        d = r["domain"]
+        if d not in seen_d:
+            seen_d.add(d)
+            src_links.add((d, r["link"]))
+        doms.add(d)
+        if d in REPUTABLE_DOMAINS:
+            rep_doms.add(d)
+    # the candidate's own outlet counts too
+    doms.add(item["domain"])
+    if item["domain"] in REPUTABLE_DOMAINS:
+        rep_doms.add(item["domain"])
+    src_links.add((item["domain"], item["link"]))
+
+    if not ((len(doms) >= MIN_SOURCES and rep_doms) or len(rep_doms) >= 2):
+        return None, "single_source"
+    return {
+        "fingerprint": fp,
+        "title": title,
+        "link": item["link"],
+        "category": item["category"],
+        "sources": sorted(doms),
+        "source_links": sorted(src_links)[:6],
+        "published": item["published"],
+    }, "ok"
+
+
+def select_candidates(clusters, limit=25):
+    """Rank story clusters, most newsworthy first.
+
+    Reputable-outlet stories first (easiest to corroborate), then newest.
+    """
+    cands = []
     for cl in clusters:
-        titles = " ".join(c["title"] for c in cl)
-        harm = has_harm(titles)
-        if harm:
-            reject("harm"); continue
-        doms = {c["domain"] for c in cl if c["domain"]}
-        rep_doms = {d for d in doms if d in REPUTABLE_DOMAINS}
-        # truth signal: 3+ independent outlets incl. 1 reputable,
-        # OR 2 reputable outlets independently reporting the same story
-        if not ((len(doms) >= MIN_SOURCES and rep_doms) or len(rep_doms) >= 2):
-            reject("single_source"); continue
-        item = min(cl, key=lambda c: c["published"])  # earliest report
-        fp = fingerprint(cl)
-        if fp in seen_fps or _is_near_dup(item["title"], recent_titles):
-            reject("duplicate"); continue
-        seen_d, src_links = set(), []
-        for c in cl:
-            if c["domain"] and c["domain"] not in seen_d:
-                seen_d.add(c["domain"])
-                src_links.append((c["domain"], c["link"]))
-        top_cat = Counter(c["category"] for c in cl).most_common(1)[0][0]
-        passed.append({
-            "fingerprint": fp,
-            "title": item["title"],
-            "link": item["link"],
-            "category": top_cat,
-            "sources": sorted(doms),
-            "source_links": src_links[:6],
-            "published": item["published"],
-        })
-    stats["passed"] = len(passed)
-    # newest verified first
-    passed.sort(key=lambda s: s["published"], reverse=True)
-    return passed[:MAX_POSTS], stats
+        rep_item = min(cl, key=lambda c: c["published"])
+        rep = 1 if rep_item["domain"] in REPUTABLE_DOMAINS else 0
+        cands.append((rep, rep_item["published"], rep_item))
+    cands.sort(key=lambda t: (t[0], t[1]), reverse=True)
+    return [c for _, _, c in cands[:limit]]
+
 
 # ---------------------------------------------------------- STAGE 3: REWRITE
 REWRITE_PROMPT = """Rewrite this news story as a FULL, detailed news article in English -- NOT a short summary.
@@ -306,16 +378,16 @@ ARTICLE TEXT:
 {article}
 
 RULES:
-- Headline: engaging and hook-y, under 90 characters. Must stay accurate -- never invent facts. Do NOT copy the original headline.
-- Opening paragraph must HOOK the reader: lead with the most surprising or important angle of the story.
+- Headline: engaging and hook-y, under 90 characters, with the main keywords up front. Must stay accurate -- never invent facts. Do NOT copy the original headline.
+- Opening paragraph must HOOK the reader AND work as an SEO snippet: lead with the most surprising or important angle, include the key names/places, keep it tight (~150 characters of substance before expanding).
 - Write 6 to 10 paragraphs with rich detail drawn from the article text above. Cover who, what, when, where, why, and what happens next.
 - Format the article beautifully with HTML:
   * <strong> around key facts, names, numbers, and dates
-  * <h3> subheadings to break the article into sections
+  * <h2> subheadings (keyword-rich) to break the article into sections
   * <ul><li> bullet lists for key points or takeaways
   * <blockquote> for direct quotes (only real quotes from the text above)
 - Do not invent quotes, numbers, or facts not present above.
-- Reply ONLY as JSON: {{"headline": "...", "body": "<p>...</p><h3>...</h3>..."}}
+- Reply ONLY as JSON: {{"headline": "...", "body": "<p>...</p><h2>...</h2>..."}}
 """
 
 
@@ -706,17 +778,45 @@ def main():
 
     if not errors:
         try:
+            # ---- STAGE 1/6: HUNTER -- collect fresh headlines ------------
+
+            log("STAGE 1/6 HUNTER: collecting headlines")
             items = hunt()
-            log(f"HUNT total: {len(items)} items")
+            log(f"HUNTER done: {len(items)} items")
+
+            # ---- STAGE 2/6: VERIFIER -- actively corroborate each story --
+            log("STAGE 2/6 VERIFIER: corroborating stories")
             clusters = cluster_items(items)
-            log(f"VERIFY {len(clusters)} story clusters")
-            stories, vstats = verify(clusters, seen, recent_titles)
-            log(f"VERIFY passed={vstats['passed']} "
+            candidates = select_candidates(clusters, limit=25)
+            stories = []
+            vstats = {"checked": 0, "passed": 0, "rejected": 0,
+                      "rejected_reasons": {}}
+            for item in candidates:
+                if len(stories) >= MAX_POSTS:
+                    break
+                vstats["checked"] += 1
+                story, reason = verify_candidate(item, seen, recent_titles)
+                if story:
+                    stories.append(story)
+                    vstats["passed"] += 1
+                    log(f"VERIFIED [{len(story['sources'])} outlets] "
+                        f"{story['title'][:60]}")
+                else:
+                    vstats["rejected"] += 1
+                    rr = vstats["rejected_reasons"]
+                    rr[reason] = rr.get(reason, 0) + 1
+            log(f"VERIFIER done: passed={vstats['passed']} "
                 f"rejected={vstats['rejected']}")
+
+            # ---- STAGES 3-5 per story: REWRITE -> PHOTO -> PUBLISH -------
             for story in stories:
                 try:
+                    # STAGE 3/6: REWRITER -- full SEO article
+                    log(f"STAGE 3/6 REWRITER: {story['title'][:50]}")
                     headline, body, via = rewrite_story(story, key_status)
-                    # fresh image only: never reuse an image already posted
+
+                    # STAGE 4/6: PHOTOGRAPHER -- fresh photo, never repeated
+                    log("STAGE 4/6 PHOTOGRAPHER: finding photo")
                     candidates = extract_images(story["link"])
                     image = next((u for u in candidates
                                   if u not in seen_images), None)
@@ -724,7 +824,7 @@ def main():
                         # HARD RULE: never post without a photo --
                         # search the web for one instead.
                         for q in image_queries_for(story):
-                            log(f"IMAGE searching: {q}")
+                            log(f"PHOTO searching: {q}")
                             for u in search_image(q):
                                 if u not in seen_images:
                                     image = u
@@ -735,9 +835,12 @@ def main():
                         log(f"SKIP (no photo found): {story['title'][:60]}")
                         seen.add(story["fingerprint"])
                         continue
+
+                    # STAGE 5/6: PUBLISHER -- live to Blogger
+                    log("STAGE 5/6 PUBLISHER: publishing live")
                     url = publish_post(headline, body, image,
                                        story["source_links"], story["category"])
-                    log(f"PUBLISH [{via}] {headline} -> {url}")
+                    log(f"PUBLISHED [{via}] {headline} -> {url}")
                     seen.add(story["fingerprint"])
                     if image:
                         seen_images.add(image)
@@ -759,6 +862,8 @@ def main():
             errors.append(f"pipeline: {e}")
             log(f"ERROR pipeline: {e}")
 
+    # ---- STAGE 6/6: REPORTER -- save state + dashboard -------------------
+    log("STAGE 6/6 REPORTER: saving state")
     c = state["counters"].setdefault(today, {"runs": 0, "posts": 0})
     c["runs"] += 1
     c["posts"] += len(posts)
