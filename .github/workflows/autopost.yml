@@ -2,7 +2,7 @@
 #  WTN AUTOPOST v2 -- World Trend Network autonomous autoposter
 #  Save as: .github/workflows/autopost.yml
 #  Every 30 minutes: HUNT -> VERIFY -> PHOTO -> REWRITE -> PUBLISH (Blogger live)
-#  -> SAVE status.json + seen.json.  Target: 2-3 posts per run.
+#  -> SAVE status.json + seen.json.  Target: 1 post per run (48/day).
 # ============================================================================
 
 name: wtn-autopost
@@ -30,9 +30,11 @@ jobs:
     env:
       HUNT_HOURS: "2"               # first look: stories from the last 2h
       HUNT_FALLBACK_HOURS: "6"      # widen to 6h if fewer than MIN posts found
-      MAX_POSTS_PER_RUN: "3"
-      MIN_POSTS_PER_RUN: "2"
+      MAX_POSTS_PER_RUN: "1"
+      MIN_POSTS_PER_RUN: "1"
       RUN_BUDGET_SEC: "660"         # stop starting new stories after 11 min
+      POST_GAP_SEC: "120"           # pause between posts (Blogger throttles bursts)
+      BLOGGER_COOLDOWN_SEC: "90"
 
     steps:
       - name: Checkout repo
