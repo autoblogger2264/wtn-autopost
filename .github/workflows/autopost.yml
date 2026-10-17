@@ -1,22 +1,8 @@
 # ============================================================================
-#  WTN AUTOPOST -- World Trend Network autonomous autoposter
-# ----------------------------------------------------------------------------
-#  Every 30 minutes this workflow:
-#    1. HUNTS      Google News across World / Tech / Sports / Entertainment /
-#                  Business / Health / Science (last 2 hours only)
-#    2. VERIFIES   every story: 3+ independent outlets incl. 1 reputable,
-#                  OR 2 reputable outlets -- plus harm + duplicate filters
-#    3. REWRITES   with Gemini (multi-key rotation, Groq fallback if all fail)
-#    4. PHOTOS     article image -> Wikimedia Commons search fallback;
-#                  watermarked/logo images rejected; never repeats a photo;
-#                  NEVER posts without a photo
-#    5. PUBLISHES  directly LIVE to Blogger (never drafts)
-#    6. SAVES      status.json + seen.json back to the repo
-#                  (dedup memory + dashboard data + keeps repo active so
-#                  GitHub never pauses the schedule)
-#
-#  Cost: ~48 runs/day x ~2 min = ~96 min/day -- far under GitHub's free
-#  2000 min/month. Free forever, runs while your phone is offline.
+#  WTN AUTOPOST v2 -- World Trend Network autonomous autoposter
+#  Save as: .github/workflows/autopost.yml
+#  Every 30 minutes: HUNT -> VERIFY -> PHOTO -> REWRITE -> PUBLISH (Blogger live)
+#  -> SAVE status.json + seen.json.  Target: 2-3 posts per run.
 # ============================================================================
 
 name: wtn-autopost
@@ -24,14 +10,13 @@ run-name: "WTN AutoPost ${{ github.event_name }}"
 
 on:
   schedule:
-    - cron: "*/30 * * * *"      # every 30 minutes, 24/7
-  workflow_dispatch:            # manual "Run workflow" button in Actions tab
+    - cron: "*/30 * * * *"      # GitHub may delay scheduled runs a few minutes
+  workflow_dispatch:            # manual "Run workflow" button
 
 permissions:
   contents: write               # commit status.json / seen.json back
 
-# Never run two publishers at once: overlapping runs would read the same
-# seen.json and publish the same stories twice.
+# Never two publishers at once (would duplicate posts).
 concurrency:
   group: wtn-autopost
   cancel-in-progress: false
@@ -40,11 +25,14 @@ jobs:
   autopost:
     name: Hunt, verify, publish
     runs-on: ubuntu-latest
-    timeout-minutes: 15         # hard stop: a stuck run never blocks the next
+    timeout-minutes: 15
 
-    env:                        # tuning knobs -- change here, no code edit
-      HUNT_HOURS: "2"           # only stories from the last 2 hours
-      MAX_POSTS_PER_RUN: "3"    # 2-3 fresh posts per 30-minute cycle
+    env:
+      HUNT_HOURS: "2"               # first look: stories from the last 2h
+      HUNT_FALLBACK_HOURS: "6"      # widen to 6h if fewer than MIN posts found
+      MAX_POSTS_PER_RUN: "3"
+      MIN_POSTS_PER_RUN: "2"
+      RUN_BUDGET_SEC: "660"         # stop starting new stories after 11 min
 
     steps:
       - name: Checkout repo
@@ -54,7 +42,7 @@ jobs:
         uses: actions/setup-python@v5
         with:
           python-version: "3.11"
-          cache: "pip"          # faster + more reliable installs
+          cache: "pip"
 
       - name: Install dependencies
         run: pip install -r requirements.txt
@@ -69,40 +57,43 @@ jobs:
           BLOGGER_CLIENT_ID: ${{ secrets.BLOGGER_CLIENT_ID }}
           BLOGGER_CLIENT_SECRET: ${{ secrets.BLOGGER_CLIENT_SECRET }}
           BLOGGER_REFRESH_TOKEN: ${{ secrets.BLOGGER_REFRESH_TOKEN }}
-        run: |
-          # Network blips happen -- one automatic retry before calling it failed.
-          # Safe: state is saved after EVERY post, so a retry never duplicates.
-          python agent.py || { echo "RETRY in 30s..."; sleep 30; python agent.py; }
+        # agent.py retries internally (network, Blogger 5xx, AI keys), and exits
+        # non-zero ONLY for dead credentials -- so the run turns red exactly
+        # when you must act. No blind whole-run retry (it only wasted minutes).
+        run: python agent.py
 
-      - name: Run summary (what got published)
+      - name: Run summary
         if: always()
         run: |
-          python - <<'EOF' >> "$GITHUB_STEP_SUMMARY"
+          python - <<'PY' >> "$GITHUB_STEP_SUMMARY"
           import json
           try:
               s = json.load(open("status.json"))
-              print(f"### WTN AutoPost -- {s['last_run']}")
-              print(f"Posts this run: **{s['posts_this_run']}** | "
-                    f"Total posts: **{s['total_posts']}** | "
-                    f"Errors: **{len(s['errors'])}**")
-              for p in s.get("recent_posts", [])[:3]:
-                  print(f"- [{p['title']}]({p['url']})")
-              for e in s.get("errors", [])[:5]:
-                  print(f"- ERROR: {e}")
               v = s.get("verifier", {})
-              print(f"Verifier: checked={v.get('checked')} "
-                    f"passed={v.get('passed')} rejected={v.get('rejected')}")
+              print(f"### WTN AutoPost -- {s['last_run']}")
+              print(f"Posts this run: **{s.get('posts_this_run', 0)}** | "
+                    f"Posts today: **{s['posts_today']}** | "
+                    f"Total: **{s['posts_total']}** | "
+                    f"Verified: **{v.get('passed', 0)}/{v.get('checked', 0)}**")
+              for p in s.get("last_posts", [])[:3]:
+                  print(f"- [{p['title']}]({p['url']})")
+              for e in s.get("errors", []):
+                  print(f"- ERROR: {e}")
           except Exception as ex:
               print(f"summary unavailable: {ex}")
-          EOF
+          PY
 
       - name: Save run status (dedup memory + dashboard data)
-        if: always()            # even a failed run saves what it published
+        if: always()
         run: |
           git config user.name "wtn-autopost"
           git config user.email "wtn-autopost@users.noreply.github.com"
           git add status.json seen.json || true
-          # status.json changes every run (timestamps/counters), so this commit
-          # keeps the repo active -- GitHub never pauses the 30-min schedule.
           git diff --cached --quiet || git commit -m "autopost: $(date -u +%F_%H:%M_UTC)"
-          git push || { git pull --rebase && git push; }
+          for i in 1 2 3; do
+            git push && exit 0
+            echo "push failed, rebasing (try $i)"
+            git pull --rebase --autostash -X theirs || git rebase --abort
+            sleep 3
+          done
+          echo "::warning::could not push status files"
