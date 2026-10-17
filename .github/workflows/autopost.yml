@@ -1,4 +1,3 @@
-
 # ============================================================================
 #  WTN AUTOPOST -- World Trend Network autonomous autoposter
 # ----------------------------------------------------------------------------
@@ -82,7 +81,7 @@ jobs:
           import json
           try:
               s = json.load(open("status.json"))
-              print(f"### WTN AutoPost -- {s['last_run_utc']} UTC")
+              print(f"### WTN AutoPost -- {s['last_run']}")
               print(f"Posts this run: **{s['posts_this_run']}** | "
                     f"Total posts: **{s['total_posts']}** | "
                     f"Errors: **{len(s['errors'])}**")
@@ -90,6 +89,9 @@ jobs:
                   print(f"- [{p['title']}]({p['url']})")
               for e in s.get("errors", [])[:5]:
                   print(f"- ERROR: {e}")
+              v = s.get("verifier", {})
+              print(f"Verifier: checked={v.get('checked')} "
+                    f"passed={v.get('passed')} rejected={v.get('rejected')}")
           except Exception as ex:
               print(f"summary unavailable: {ex}")
           EOF
