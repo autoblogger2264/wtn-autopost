@@ -569,17 +569,24 @@ def _bad_image(u):
 
 
 def image_queries_for(story):
-    """Ordered image-search queries, most specific first."""
+    """Ordered image-search queries, most specific first, broadest last."""
     filler = {"news", "today", "report", "reports", "says", "after", "amid",
               "over", "under", "with", "from", "will", "says"}
     words = [w for w in sig_words(story["title"])
              if len(w) > 3 and w not in filler]
     by_len = sorted(set(words), key=len, reverse=True)
     queries = []
-    # intitle: pairs of the most specific words -> best relevance
+    # 1. intitle: pairs of the most specific words -> best relevance
     for a, b in zip(by_len[:3], by_len[1:4]):
         queries.append(f"intitle:{a} intitle:{b}")
-    # safe generic fallback: the news category itself
+    # 2. plain keyword queries -> broader net when intitle: finds nothing
+    if len(by_len) >= 3:
+        queries.append(" ".join(by_len[:3]))
+    if len(by_len) >= 2:
+        queries.append(" ".join(by_len[:2]))
+    if by_len:
+        queries.append(by_len[0])
+    # 3. safe generic fallback: the news category itself
     queries.append(story["category"])
     return queries
 
@@ -747,7 +754,11 @@ def build_status(started, state, vstats, key_status, posts, errors, today):
         },
         "keys": {
             "gemini_keys_total": len(key_status["ok"]),
-            "gemini_keys_ok": sum(1 for v in key_status["ok"] if v),
+            "gemini_keys_ok": sum(1 for v in key_status["ok"] if v is True),
+            "gemini_keys_failed": sum(1 for v in key_status["ok"]
+                                      if v is False),
+            "gemini_keys_untested": sum(1 for v in key_status["ok"]
+                                        if v is None),
             "groq": key_status.get("groq", "unused"),
         },
         "errors": errors[-5:],
@@ -832,8 +843,13 @@ def main():
                             if image:
                                 break
                     if not image:
-                        log(f"SKIP (no photo found): {story['title'][:60]}")
+                        # Visible skip (never silent): the user must see WHY
+                        # a verified story did not become a post.
+                        msg = f"no photo found, skipped: {story['title'][:60]}"
+                        log(f"SKIP ({msg})")
+                        errors.append(msg)
                         seen.add(story["fingerprint"])
+                        save_state(state)
                         continue
 
                     # STAGE 5/6: PUBLISHER -- live to Blogger
