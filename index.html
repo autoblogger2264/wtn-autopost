@@ -514,9 +514,12 @@ function renderKeys(k){
   for(var i=0;i<total;i++) dots+='<span class="dot '+(i<okc?"ok":"bad")+'" title="Gemini key '+(i+1)+(i<okc?" — healthy":" — failing")+'"></span>';
   if(!total) dots='<span class="muted">—</span>';
   var g=String(k.groq==null?"":k.groq);
-  var gPill=g.toLowerCase()==="ok"
+  var gl=g.toLowerCase();
+  var gPill=gl==="ok"
     ? '<span class="pillok">● Operational</span>'
-    : '<span class="pillbad">● '+esc(g||"unknown")+'</span>';
+    : (gl==="unused"
+      ? '<span class="pillok" style="background:#EEF0F4;color:#5b6475;border-color:#d8dce4">● Standby</span>'
+      : '<span class="pillbad">● '+esc(g||"unknown")+'</span>');
   el.innerHTML=
     '<div class="keyrow"><div class="nm">Gemini keys</div><div class="dots">'+dots+'</div><div class="st">'+okc+' / '+total+' healthy</div></div>'+
     '<div class="keyrow"><div class="nm">Groq fallback</div>'+gPill+'</div>';
