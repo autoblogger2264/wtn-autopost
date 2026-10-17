@@ -75,6 +75,8 @@ HUNT_HOURS = _int("HUNT_HOURS", 2)
 HUNT_FALLBACK_HOURS = _int("HUNT_FALLBACK_HOURS", 6)
 RUN_BUDGET_SEC = _int("RUN_BUDGET_SEC", 11 * 60)   # workflow timeout is 15 min
 MAX_CANDIDATES = _int("MAX_CANDIDATES", 40)
+POST_GAP_SEC = _int("POST_GAP_SEC", 120)            # pause between live posts
+BLOGGER_COOLDOWN_SEC = _int("BLOGGER_COOLDOWN_SEC", 90)
 
 # Preferred order (Google's docs, Oct 2026). gemini-2.5-* and 2.0-* were shut
 # down on/before 16 Oct 2026, so they are NOT in the chain. At run start the
@@ -378,10 +380,17 @@ def _passes(doms, rep):
     return (len(doms) >= MIN_SOURCES and bool(rep)) or len(rep) >= 2
 
 
+JUNK_RE = re.compile(r"^(video|watch|live|photos?|gallery|podcast)\b\s*[:.|-]|"
+                     r"news bulletin|live updates|horoscope|crossword|newsletter|"
+                     r"\bquiz\b|today in pictures", re.I)
+
+
 def verify_candidate(cand, seen_fps, known_titles):
     """cand = {"item": rep item, "cluster": [items]}. Returns (story|None, reason)."""
     item = cand["item"]
     title = item["title"]
+    if JUNK_RE.search(title):
+        return None, "junk"
     if has_harm(title):
         return None, "harm"
     fp = fingerprint_title(title)
@@ -857,12 +866,35 @@ def gemini_rewrite(key, model, story):
     return _parse_rewrite(text, story["title"])
 
 
+_groq_live = {"list": None}
+GROQ_PREF = ["openai/gpt-oss-120b", "openai/gpt-oss-20b",
+             "llama-3.3-70b-versatile", "llama-3.1-8b-instant"]
+
+
+def groq_models():
+    if _groq_live["list"] is None:
+        _groq_live["list"] = []
+        try:
+            r = requests.get("https://api.groq.com/openai/v1/models",
+                             headers={"Authorization": f"Bearer {GROQ_API_KEY}"},
+                             timeout=15)
+            if r.status_code == 200:
+                _groq_live["list"] = [m["id"] for m in r.json().get("data", [])
+                                      if m.get("active", True)]
+                log(f"GROQ live models: {', '.join(sorted(_groq_live['list']))}")
+        except Exception as e:
+            log(f"groq model discovery failed: {e}")
+    pref = [GROQ_MODEL] + [m for m in GROQ_PREF + GROQ_FALLBACK_MODELS if m != GROQ_MODEL]
+    live = _groq_live["list"]
+    return [m for m in pref if m in live] if live else pref
+
+
 def groq_rewrite(story):
     url = "https://api.groq.com/openai/v1/chat/completions"
     headers = {"Authorization": f"Bearer {GROQ_API_KEY}",
                "Content-Type": "application/json"}
     last = None
-    for model in [GROQ_MODEL] + [m for m in GROQ_FALLBACK_MODELS if m != GROQ_MODEL]:
+    for model in groq_models():
         payload = {"model": model, "temperature": 0.7, "max_tokens": 4096,
                    "response_format": {"type": "json_object"},
                    "messages": [
@@ -871,21 +903,18 @@ def groq_rewrite(story):
                        {"role": "user", "content": _prompt(story)}]}
         try:
             r = requests.post(url, headers=headers, json=payload, timeout=90)
-            if r.status_code == 400 and "model" not in r.text.lower():
-                payload.pop("response_format")         # json mode unsupported
+            if r.status_code == 400:                   # maybe json mode unsupported
+                payload.pop("response_format")
                 r = requests.post(url, headers=headers, json=payload, timeout=90)
-            if r.status_code in (400, 404):            # decommissioned / unknown model
-                last = f"{model}: {r.text[:100]}"
-                log(f"GROQ model {model} unavailable -> next")
+            if r.status_code != 200:
+                last = f"{model}: HTTP {r.status_code} {r.text[:120]}"
+                log(f"GROQ {last} -> next model")
                 continue
-            if r.status_code == 429:
-                last = f"{model}: 429"
-                continue
-            r.raise_for_status()
             h, b = _parse_rewrite(r.json()["choices"][0]["message"]["content"],
                                   story["title"])
             if not body_ok(b):
                 last = f"{model}: output too short"
+                log(f"GROQ {last} -> next model")
                 continue
             return h, b, model
         except requests.RequestException as e:
@@ -893,7 +922,7 @@ def groq_rewrite(story):
     raise AIError("other", f"groq failed ({last})")
 
 
-_bad_keys, _dead_models = set(), set()
+_bad_keys, _dead_models, _exhausted = set(), set(), set()
 _key_cursor = {"i": None}
 _live_models = {"list": None}        # filled by discover_models()
 
@@ -925,13 +954,20 @@ def discover_models():
     log("MODELS: discovery unavailable -- using built-in order")
 
 
+def _ver(name):
+    m = re.search(r"gemini-(\d+(?:\.\d+)?)", name)
+    return float(m.group(1)) if m else 0.0
+
+
 def _models():
     pref = [GEMINI_MODEL] + [m for m in GEMINI_FALLBACK_MODELS if m != GEMINI_MODEL]
     live = _live_models["list"]
     if live:
         ordered = [m for m in pref if m in live]
-        # any other live flash model (newest names sort last) as extra backup
-        ordered += sorted((m for m in live if m not in ordered), reverse=True)
+        extras = [m for m in live if m not in ordered]
+        # non-lite first, newest version first
+        extras.sort(key=lambda m: ("lite" not in m, _ver(m)), reverse=True)
+        ordered += extras
     else:
         ordered = pref
     return [m for m in ordered if m not in _dead_models]
@@ -952,6 +988,8 @@ def rewrite_story(story, key_status):
         if key in _bad_keys:
             continue
         for model in _models():
+            if (key, model) in _exhausted:
+                continue
             try:
                 h, b = gemini_rewrite(key, model, story)
                 if not body_ok(b):
@@ -963,17 +1001,27 @@ def rewrite_story(story, key_status):
                 last_err = e
                 if e.kind == "model":
                     _dead_models.add(model)
-                    log(f"REWRITE model {model} unavailable -> trying fallback")
-                    continue                              # same key, next model
-                log(f"REWRITE gemini key{i+1} {model}: {e}")
-                if e.kind in ("quota", "auth"):
+                    log(f"REWRITE model {model} unavailable -> next model")
+                elif e.kind == "quota":
+                    # Gemini quotas are PER MODEL: this key may still work on
+                    # another model, so only this (key, model) pair is parked.
+                    _exhausted.add((key, model))
+                elif e.kind == "auth":
                     _bad_keys.add(key)
                     key_status["ok"][i] = False
-                break                                     # next key
+                    log(f"REWRITE gemini key{i+1} rejected: {e}")
+                    break
+                else:
+                    log(f"REWRITE gemini key{i+1} {model}: {e}")
+                continue                                  # next model, same key
             except Exception as e:
                 last_err = e
-                log(f"REWRITE gemini key{i+1} error: {e}")
-                break
+                log(f"REWRITE gemini key{i+1} {model} error: {e}")
+                continue
+        live = _models()
+        if live and all((key, m) in _exhausted for m in live):
+            key_status["ok"][i] = False
+    log(f"REWRITE gemini exhausted ({len(_exhausted)} key/model pairs out of quota)")
     if GROQ_API_KEY:
         try:
             h, b, gm = groq_rewrite(story)
@@ -988,6 +1036,7 @@ def rewrite_story(story, key_status):
 
 # ----------------------------------------------------------- STAGE 5: PUBLISH
 _token = {"value": None, "exp": 0}
+_blogger_ok = {"n": 0, "history": False}
 
 
 def blogger_token(force=False):
@@ -1078,7 +1127,7 @@ def publish_post(headline, body_html, image_url, source_links, label):
         return "https://example.invalid/dry-run"
     endpoint = (f"https://www.googleapis.com/blogger/v3/blogs/{BLOG_ID}/posts"
                 "?isDraft=false&fetchImages=false")
-    refreshed, ambiguous = False, False
+    refreshed, ambiguous, forbidden = False, False, 0
     last = None
     for attempt in range(4):
         if ambiguous:                      # timeout/5xx may still have created it
@@ -1107,6 +1156,17 @@ def publish_post(headline, body_html, image_url, source_links, label):
             if any(x in ("rateLimitExceeded", "userRateLimitExceeded",
                          "quotaExceeded", "dailyLimitExceeded") for x in reasons):
                 raise BloggerLimit(f"Blogger quota/rate limit: {msg}")
+            if _blogger_ok["n"] or _blogger_ok["history"]:
+                # Posting HAS worked before with this token, so this is Blogger
+                # throttling bursts of posts ("caller does not have permission").
+                forbidden += 1
+                if forbidden == 1:
+                    log(f"PUBLISH 403 (throttled?) -- cooling down "
+                        f"{BLOGGER_COOLDOWN_SEC}s then retrying once")
+                    time.sleep(BLOGGER_COOLDOWN_SEC)
+                    continue
+                raise BloggerLimit(f"Blogger is throttling posts (403: {msg}); "
+                                   "stopping this run, next run retries")
             raise FatalError(f"Blogger refused (403): {msg} -- is the Google "
                              "account the blog's author/admin, and is the Blogger "
                              "API enabled for the OAuth project?")
@@ -1212,6 +1272,7 @@ def process_story(story, state, seen, seen_images, key_status, vstats):
     headline, body, via = rewrite_story(story, key_status)
 
     url = publish_post(headline, body, image, story["source_links"], story["category"])
+    _blogger_ok["n"] += 1
     log(f"PUBLISHED [{via}] {headline} -> {url}")
     seen.add(fp)
     seen_images.add(image)
@@ -1287,7 +1348,9 @@ def run_pipeline(state, seen, seen_images, key_status, vstats, errors):
             except Exception as e:
                 errors.append(f"story failed: {story['title'][:50]}: {str(e)[:160]}")
                 log(f"ERROR story: {e}")
-            time.sleep(3)
+            if vstats["published"] and vstats["published"] < MAX_POSTS \
+                    and time.time() - t0 + POST_GAP_SEC < RUN_BUDGET_SEC:
+                time.sleep(POST_GAP_SEC)       # Blogger throttles post bursts
 
 
 def main():
@@ -1308,6 +1371,7 @@ def main():
     fatal = bool(errors)
 
     state = load_state()
+    _blogger_ok["history"] = state.get("total_posts", 0) > 0
     seen = set(state["seen_fps"])
     seen_images = set(state["seen_images"])
 
